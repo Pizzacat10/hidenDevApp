@@ -1,0 +1,274 @@
+-- RoundManager Module
+local RoundManager = {}
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local remote = ReplicatedStorage:WaitForChild("remote")
+local roundStartEvent = remote:WaitForChild("roundStart")
+local roundEndEvent = remote:WaitForChild("roundEnd")
+local timer = Workspace:FindFirstChild("time")
+
+local mapTemplate = ReplicatedStorage:FindFirstChild("map"):FindFirstChild("hospital")
+
+local face2 = workspace:FindFirstChild("face2")
+
+-- variables that will be used in the module and make it easier to change when needed
+
+local currentMap = nil
+local chosenPlayer = nil
+local candlesFolder = nil
+
+local ROUND_WAIT = 30
+local ROUND_DURATION = 180
+local MIN_PLAYERS = 2
+local KILLER_BUFF_SPEED = 3
+
+-- check if there are more than 2 players in the game
+local function moreThanTwoPlayers()
+	return #Players:GetPlayers() >= MIN_PLAYERS
+end
+
+-- check if all players that are not the killer are alive, with the value alive changing when they're dead
+local function allSurvivorsDead()
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player:FindFirstChild("killer") and not player.killer.Value and player.alive then
+			return false
+		end
+	end
+	return true
+end
+
+-- check if there is a player with the value killer == true and their alive value is true too to know if we should end the round before the timer
+local function killerIsDeadOrLeft()
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player:FindFirstChild("killer") and player.killer.Value and player.alive then
+			return false
+		end
+	end
+	return true
+end
+
+-- removes old map to avoid map overlay
+local function clearOldMap()
+	local existingMap = Workspace:FindFirstChild("map")
+	if existingMap then
+		existingMap:Destroy()
+	end
+end
+
+-- makes the values for the game to know and get access to player easier
+local function assignKillerTag(player)
+	local killer = Instance.new("BoolValue")
+	killer.Name = "killer"
+	killer.Value = false
+	killer.Parent = player
+
+	local alive = Instance.new("BoolValue")
+	alive.Name = "alive"
+	alive.Value = false
+	alive.Parent = player
+
+	local whatKiller = Instance.new("StringValue")
+	whatKiller.Name = "Whatkiller"
+	whatKiller.Value = "Warden"
+	whatKiller.Parent = player
+
+	local whatSurvivor = Instance.new("StringValue")
+	whatSurvivor.Name = "Whatsurvivor"
+	whatSurvivor.Value = "luna"
+	whatSurvivor.Parent = player
+end
+
+-- will teleport player to their assigned spawn and morph them to their character model as a killer or survivor
+local function setupCharacters(allPlayers, cloneMap)
+	local survivorSpawns = { -- survivor spawns
+		cloneMap:FindFirstChild("startSurvival1"),
+		cloneMap:FindFirstChild("startSurvival2"),
+		cloneMap:FindFirstChild("startSurvival3"),
+		cloneMap:FindFirstChild("startSurvival4"),
+	}
+	local killerSpawn = cloneMap:FindFirstChild("killerSpawn") -- killer spawn
+
+	for _, player in ipairs(allPlayers) do
+		local isKiller = (player == chosenPlayer) -- check if the player is the killer
+		local characterType = isKiller and "killer" or "survivor" -- string that checks if player is survivor or killer
+		local charNameValue = isKiller and player:FindFirstChild("Whatkiller") or player:FindFirstChild("Whatsurvivor") -- find the player’s character name
+		local charName = charNameValue and charNameValue.Value or nil -- check if it exists
+
+		print("Trying to load character:", characterType, charName)
+
+		-- find the folder that has all the characters
+		local charactersFolder = ReplicatedStorage:FindFirstChild("characters")
+
+		if not charactersFolder then -- check if found
+			warn("Missing 'characters' folder in ReplicatedStorage")
+			return
+		end
+
+		-- check if the character type folder exists in the characters folder
+		local typeFolder = charactersFolder:FindFirstChild(characterType)
+
+		if not typeFolder then -- check if found
+			warn("Missing character type folder: " .. characterType)
+			return
+		end
+
+		-- here it saves the charName and checks if it exists in the folder
+		local morphTemplate = charName and typeFolder:FindFirstChild(charName)
+
+		if not morphTemplate then
+			warn("Missing character model: " .. tostring(charName) .. " in " .. characterType)
+			return
+		end
+
+		local morphClone = morphTemplate:Clone() -- clone the morph
+		morphClone.Name = player.Name
+
+		if player.Character then -- if the player has a character, destroy it
+			player.Character:Destroy()
+		end
+
+		-- after destroying the character, set the player’s character to the morph clone and parent it to workspace
+		player.Character = morphClone
+		morphClone.Parent = Workspace
+
+		-- looks for the player's HumanoidRootPart or Torso (used for teleportation since they share same position)
+		local hrp = morphClone:FindFirstChild("HumanoidRootPart") or morphClone:FindFirstChild("Torso")
+
+		if hrp then
+			if isKiller and killerSpawn then
+				player.killer.Value = true
+				player.alive.Value = true
+				hrp.CFrame = killerSpawn.CFrame + Vector3.new(0, 5, 0) 
+			else
+				local randomSpawn = survivorSpawns[math.random(1, #survivorSpawns)]
+				player.alive.Value = true
+				if randomSpawn then
+					hrp.CFrame = randomSpawn.CFrame + Vector3.new(0, 5, 0)
+				end
+			end
+		end
+	end
+end
+
+-- starts by checking if all candles are fixed, if yes gives the player the walkSpeed buff
+local function startPhaseTwo()
+
+	-- runs through a folder with all candles in the map and checks if any fixed?.Value == false, stops function if any
+	for _, candle in ipairs(candlesFolder:GetChildren()) do
+		if candle:FindFirstChild("fixed?") and not candle["fixed?"].Value then
+			return
+		end
+	end
+
+	-- this check is to see if the face2 buff happened already
+	if face2.Value == false then
+		local humanoid = chosenPlayer.Character and chosenPlayer.Character:FindFirstChild("Humanoid")
+		if humanoid then
+			humanoid.WalkSpeed += KILLER_BUFF_SPEED -- add the buff if it finds the killer's humanoid
+		end
+		print("Phase 2 started")
+	end
+
+	face2.Value = true 
+end
+
+-- main script controlling the round and map
+local function roundStart()
+	print("Round started")
+
+	-- check if there are players in the game
+	local allPlayers = Players:GetPlayers()
+	if #allPlayers == 0 then return end
+
+	-- pick a random player from all players
+	chosenPlayer = allPlayers[math.random(1, #allPlayers)]
+	print("Chosen Killer: ", chosenPlayer.Name)
+
+	-- clear old map, clone the map, and parent it to workspace
+	clearOldMap() 
+	currentMap = mapTemplate:Clone()
+	currentMap.Name = "map"
+	currentMap.Parent = Workspace
+
+	-- get candle folder from the new map clone and set up all players (morph and spawn)
+	candlesFolder = currentMap:FindFirstChild("candles")
+	setupCharacters(allPlayers, currentMap)
+	wait(1)
+	roundStartEvent:FireAllClients(ROUND_DURATION) -- fire event to start timer countdown
+end
+
+-- round ended: reset values and players
+local function roundEnd()
+	print("Round ended")
+
+	roundEndEvent:FireAllClients(ROUND_WAIT)
+
+	for _, player in ipairs(Players:GetPlayers()) do
+
+		if player.alive.Value == true then
+			player.alive.Value = false
+		end
+
+		if player.killer.Value == true then
+			player.killer.Value = false
+		end
+
+		local char = player.Character -- get player character
+
+		if char then -- if character found, reset player to spawn by setting health to 0
+			local humanoid = char:FindFirstChild("Humanoid")
+			if humanoid then
+				humanoid.Health = 0
+			end
+		end
+	end
+end
+
+-- assign values when a player joins the game
+Players.PlayerAdded:Connect(assignKillerTag)
+
+-- main function controlling game flow
+function RoundManager.Run()
+
+	-- main loop that is the heart of the RoundManager module
+	while true do
+
+		if moreThanTwoPlayers() then -- check if more than minimum players are in game
+
+			-- after minimum players, start a round to allow players to change characters or perks
+			roundEnd()
+
+			-- countdown until round starts
+			wait(1)
+			timer.Value = ROUND_WAIT
+			for i = ROUND_WAIT, 0, -1 do
+				timer.Value = i
+				wait(1)
+			end
+
+			-- start the round: teleport players, morph, spawn, assign killer
+			roundStart()
+
+			-- countdown round duration, break if conditions met
+			wait(1)
+			timer.Value = ROUND_DURATION
+			for i = ROUND_DURATION, 0, -1 do
+				timer.Value = i
+				wait(1)
+				startPhaseTwo()
+				if allSurvivorsDead() or killerIsDeadOrLeft() then
+					break
+				end
+			end
+
+		else -- wait for more players if not enough
+			print("Waiting for more players...")
+			wait(1)
+		end
+	end
+end
+
+return RoundManager
