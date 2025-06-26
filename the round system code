@@ -204,8 +204,6 @@ end
 local function roundEnd()
 	print("Round ended")
 
-	roundEndEvent:FireAllClients(ROUND_WAIT)
-
 	for _, player in ipairs(Players:GetPlayers()) do
 
 		if player.alive.Value == true then
@@ -225,6 +223,8 @@ local function roundEnd()
 			end
 		end
 	end
+	
+	roundEndEvent:FireAllClients(ROUND_WAIT)
 end
 
 -- assign values when a player joins the game
@@ -257,10 +257,13 @@ function RoundManager.Run()
 			timer.Value = ROUND_DURATION
 			for i = ROUND_DURATION, 0, -1 do
 				timer.Value = i
+				
 				wait(1)
-				startPhaseTwo()
-				if allSurvivorsDead() or killerIsDeadOrLeft() then
-					break
+				
+				startPhaseTwo() -- it will run the function every second and see if round 2 started
+				
+				if allSurvivorsDead() or killerIsDeadOrLeft() then -- it will see if survivors are dead or the killer is dead
+					break -- brack the for and end the round
 				end
 			end
 
