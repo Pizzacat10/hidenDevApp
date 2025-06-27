@@ -1,3 +1,8 @@
+-- [[
+    game can only run when there more then 2 players
+    so you will need one more persone 
+]]
+
 local PerkManager = {}
 
 local players = game:GetService("Players")
