@@ -1,17 +1,18 @@
--- Simple NPC AI with pathfinding, attacking, wandering, and tree destruction behavior
+
+-- Simple, easy to understand script with pathfinding, attacking, wandering, and tree destruction
 
 local PathfindingService = game:GetService("PathfindingService")
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local Workspace = game:GetService("Workspace")
 
+-- References to the NPC model and components
 local npc = workspace:FindFirstChild("the mimic")
 local humanoid = npc:WaitForChild("Humanoid")
 local humanoidRootPart = npc:WaitForChild("HumanoidRootPart")
 
+-- Setup animator and animations (walking, attacking, special)
 local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
-
--- Load animations for walk, attack, and special action
 local walkAnim = Instance.new("Animation")
 walkAnim.AnimationId = "rbxassetid://130563157348265"
 local walkAnimation = animator:LoadAnimation(walkAnim)
@@ -28,7 +29,7 @@ local lastAttackTime = 0
 local attackCooldown = 2
 local actionCounter = 0
 
--- Finds the closest player to the NPC for interaction or attack
+-- Finds the nearest player for NPC to interact with
 local function getClosestPlayer()
 	local closestPlayer = nil
 	local shortestDistance = math.huge
@@ -47,14 +48,15 @@ local function getClosestPlayer()
 	return closestPlayer
 end
 
--- Rotates NPC to face a target position horizontally
+-- Rotates NPC to face a specific position horizontally
 local function facePosition(position)
 	local currentPos = humanoidRootPart.Position
 	local lookAt = CFrame.new(currentPos, Vector3.new(position.X, currentPos.Y, position.Z))
 	humanoidRootPart.CFrame = lookAt
 end
 
--- Uses Roblox pathfinding to move NPC to a destination, waiting until movement finishes or fails
+-- Uses Roblox PathfindingService to move NPC smoothly to a target destination
+-- Plays walking animation during movement and waits for each waypoint to be reached
 local function moveToPosition(destination)
 	local path = PathfindingService:CreatePath({
 		AgentRadius = 2,
@@ -93,7 +95,7 @@ local function moveToPosition(destination)
 	return true
 end
 
--- Applies a physics impulse to push the player backward when attacked
+-- Applies a physical push to player when attacked, adding impact feel to combat
 local function pushPlayerBack(player)
 	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 	if hrp then
@@ -105,7 +107,7 @@ local function pushPlayerBack(player)
 	end
 end
 
--- Attacks a player if cooldown allows, plays attack animation and damages player
+-- Performs an attack if cooldown allows, deals damage, and pushes the player back
 local function attackPlayer(player)
 	if tick() - lastAttackTime < attackCooldown then
 		return
@@ -123,7 +125,7 @@ local function attackPlayer(player)
 	end
 end
 
--- Moves NPC randomly within a radius to simulate wandering
+-- Causes the NPC to wander randomly around its current position to simulate natural movement
 local function wanderRandomly()
 	local wanderRadius = 20
 	local randomAngle = math.random() * 2 * math.pi
@@ -132,7 +134,7 @@ local function wanderRandomly()
 	moveToPosition(humanoidRootPart.Position + offset)
 end
 
--- Finds the closest tree tagged with "Tree" for the NPC to interact with
+-- Finds the closest tree tagged with "Tree" for the NPC to interact with (destroy)
 local function getClosestTree()
 	local closestTree = nil
 	local shortestDistance = math.huge
@@ -150,19 +152,20 @@ local function getClosestTree()
 	return closestTree
 end
 
--- Moves NPC to the closest tree and destroys it, applying impulse if not anchored
+-- Moves to the closest tree and destroys it after facing it
+-- Adds a delay to simulate interaction time
 local function destroyClosestTree()
 	local tree = getClosestTree()
-	
+
 	print(tree)
-	
+
 	if not tree then return end
 
-	-- Ensure target Y coordinate matches NPC's Y for successful pathfinding
-	local targetPos = Vector3.new(tree.Position.X, humanoidRootPart.Position.Y, tree.Position.Z)
-	
-	local reached = moveToPosition(targetPos)
-	if not reached then return end
+	local targetPos = tree.Position
+	targetPos = Vector3.new(targetPos.X, humanoidRootPart.Position.Y, targetPos.Z)
+	moveToPosition(targetPos)
+
+	if not targetPos then return end
 
 	facePosition(tree.Position)
 	task.wait(1)
@@ -175,7 +178,7 @@ local function destroyClosestTree()
 	end
 end
 
--- Walks near the closest player, offset by a random radius and angle
+-- Moves the NPC near a player, simulating stalking or patrolling behavior
 local function walkNearPlayer()
 	local player = getClosestPlayer()
 	if not player then return end
@@ -188,7 +191,8 @@ local function walkNearPlayer()
 	moveToPosition(playerPos + offset)
 end
 
--- Chases the closest player and attacks if in range
+-- NPC chases the closest player and attacks if close enough
+-- Runs in a separate task to allow asynchronous chasing behavior
 local function chasePlayer()
 	local player = getClosestPlayer()
 	if not player then return end
@@ -212,10 +216,10 @@ local function chasePlayer()
 	end)
 end
 
--- Main AI loop deciding NPC behavior based on action count
+-- Main behavior loop controlling NPC actions
+-- Performs a special action every 5-10 cycles, otherwise picks random behaviors
 local function behaviorLoop()
 	while true do
-		-- After several actions, do a special chase behavior
 		if actionCounter >= math.random(5, 10) then
 			specialAnimation:Play()
 			task.wait(2)
@@ -223,8 +227,7 @@ local function behaviorLoop()
 			specialAnimation:Stop()
 			actionCounter = 0
 		else
-			-- Choose a behavior: 1 = wander, 2 = destroy tree, 3 = walk near player
-			local choice = 2
+			local choice = math.random(1,3)
 			if choice == 1 then
 				wanderRandomly()
 			elseif choice == 2 then
@@ -235,9 +238,9 @@ local function behaviorLoop()
 			actionCounter = actionCounter + 1
 		end
 
-		task.wait(math.random(1, 2)) -- Wait a bit before next action to avoid spamming
+		task.wait(math.random(1, 2))
 	end
 end
 
--- Start the NPC behavior loop
+-- Start the AI behavior loop
 behaviorLoop()
