@@ -1,4 +1,3 @@
--- Simple, easy to understand script with pathfinding, attacking, wandering, and tree destruction
 
 local PathfindingService = game:GetService("PathfindingService")
 local Players = game:GetService("Players")
