@@ -1,4 +1,3 @@
--- NPC AI Script by finn maymon
 -- Simple NPC AI with pathfinding, attacking, wandering, and tree destruction behavior
 
 local PathfindingService = game:GetService("PathfindingService")
