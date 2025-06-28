@@ -1,277 +1,244 @@
--- RoundManager Module
-local RoundManager = {}
+-- NPC AI Script by finn maymon
+-- Simple NPC AI with pathfinding, attacking, wandering, and tree destruction behavior
 
+local PathfindingService = game:GetService("PathfindingService")
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 local Workspace = game:GetService("Workspace")
 
-local remote = ReplicatedStorage:WaitForChild("remote")
-local roundStartEvent = remote:WaitForChild("roundStart")
-local roundEndEvent = remote:WaitForChild("roundEnd")
-local timer = Workspace:FindFirstChild("time")
+local npc = workspace:FindFirstChild("the mimic")
+local humanoid = npc:WaitForChild("Humanoid")
+local humanoidRootPart = npc:WaitForChild("HumanoidRootPart")
 
-local mapTemplate = ReplicatedStorage:FindFirstChild("map"):FindFirstChild("hospital")
+local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
 
-local face2 = workspace:FindFirstChild("face2")
+-- Load animations for walk, attack, and special action
+local walkAnim = Instance.new("Animation")
+walkAnim.AnimationId = "rbxassetid://130563157348265"
+local walkAnimation = animator:LoadAnimation(walkAnim)
 
--- variables that will be used in the module and make it easier to change when needed
+local attackAnim = Instance.new("Animation")
+attackAnim.AnimationId = "rbxassetid://133138715796123"
+local attackAnimation = animator:LoadAnimation(attackAnim)
 
-local currentMap = nil
-local chosenPlayer = nil
-local candlesFolder = nil
+local specialAnim = Instance.new("Animation")
+specialAnim.AnimationId = "rbxassetid://117110635321254"
+local specialAnimation = animator:LoadAnimation(specialAnim)
 
-local ROUND_WAIT = 30
-local ROUND_DURATION = 180
-local MIN_PLAYERS = 2
-local KILLER_BUFF_SPEED = 3
+local lastAttackTime = 0
+local attackCooldown = 2
+local actionCounter = 0
 
--- check if there are more than 2 players in the game
-local function moreThanTwoPlayers()
-	return #Players:GetPlayers() >= MIN_PLAYERS
-end
+-- Finds the closest player to the NPC for interaction or attack
+local function getClosestPlayer()
+	local closestPlayer = nil
+	local shortestDistance = math.huge
 
--- check if all players that are not the killer are alive, with the value alive changing when they're dead
-local function allSurvivorsDead()
-	for _, player in ipairs(Players:GetPlayers()) do
-		if player:FindFirstChild("killer") and not player.killer.Value and player.alive then
-			return false
-		end
-	end
-	return true
-end
-
--- check if there is a player with the value killer == true and their alive value is true too to know if we should end the round before the timer
-local function killerIsDeadOrLeft()
-	for _, player in ipairs(Players:GetPlayers()) do
-		if player:FindFirstChild("killer") and player.killer.Value and player.alive then
-			return false
-		end
-	end
-	return true
-end
-
--- removes old map to avoid map overlay
-local function clearOldMap()
-	local existingMap = Workspace:FindFirstChild("map")
-	if existingMap then
-		existingMap:Destroy()
-	end
-end
-
--- makes the values for the game to know and get access to player easier
-local function assignKillerTag(player)
-	local killer = Instance.new("BoolValue")
-	killer.Name = "killer"
-	killer.Value = false
-	killer.Parent = player
-
-	local alive = Instance.new("BoolValue")
-	alive.Name = "alive"
-	alive.Value = false
-	alive.Parent = player
-
-	local whatKiller = Instance.new("StringValue")
-	whatKiller.Name = "Whatkiller"
-	whatKiller.Value = "Warden"
-	whatKiller.Parent = player
-
-	local whatSurvivor = Instance.new("StringValue")
-	whatSurvivor.Name = "Whatsurvivor"
-	whatSurvivor.Value = "luna"
-	whatSurvivor.Parent = player
-end
-
--- will teleport player to their assigned spawn and morph them to their character model as a killer or survivor
-local function setupCharacters(allPlayers, cloneMap)
-	local survivorSpawns = { -- survivor spawns
-		cloneMap:FindFirstChild("startSurvival1"),
-		cloneMap:FindFirstChild("startSurvival2"),
-		cloneMap:FindFirstChild("startSurvival3"),
-		cloneMap:FindFirstChild("startSurvival4"),
-	}
-	local killerSpawn = cloneMap:FindFirstChild("killerSpawn") -- killer spawn
-
-	for _, player in ipairs(allPlayers) do
-		local isKiller = (player == chosenPlayer) -- check if the player is the killer
-		local characterType = isKiller and "killer" or "survivle" -- string that checks if player is survivor or killer
-		local charNameValue = isKiller and player:FindFirstChild("Whatkiller") or player:FindFirstChild("Whatsurvivor") -- find the player’s character name
-		local charName = charNameValue and charNameValue.Value or nil -- check if it exists
-
-		print("Trying to load character:", characterType, charName)
-
-		-- find the folder that has all the characters
-		local charactersFolder = ReplicatedStorage:FindFirstChild("charecters")
-
-		if not charactersFolder then -- check if found
-			warn("Missing 'characters' folder in ReplicatedStorage")
-			return
-		end
-
-		-- check if the character type folder exists in the characters folder
-		local typeFolder = charactersFolder:FindFirstChild(characterType)
-
-		if not typeFolder then -- check if found
-			warn("Missing character type folder: " .. characterType)
-			return
-		end
-
-		-- here it saves the charName and checks if it exists in the folder
-		local morphTemplate = charName and typeFolder:FindFirstChild(charName)
-
-		if not morphTemplate then
-			warn("Missing character model: " .. tostring(charName) .. " in " .. characterType)
-			return
-		end
-
-		local morphClone = morphTemplate:Clone() -- clone the morph
-		morphClone.Name = player.Name
-
-		if player.Character then -- if the player has a character, destroy it
-			player.Character:Destroy()
-		end
-
-		-- after destroying the character, set the player’s character to the morph clone and parent it to workspace
-		player.Character = morphClone
-		morphClone.Parent = Workspace
-
-		-- looks for the player's HumanoidRootPart or Torso (used for teleportation since they share same position)
-		local hrp = morphClone:FindFirstChild("HumanoidRootPart") or morphClone:FindFirstChild("Torso")
-
-		if hrp then
-			if isKiller and killerSpawn then
-				player.killer.Value = true
-				player.alive.Value = true
-				hrp.CFrame = killerSpawn.CFrame + Vector3.new(0, 5, 0) 
-			else
-				local randomSpawn = survivorSpawns[math.random(1, #survivorSpawns)]
-				player.alive.Value = true
-				if randomSpawn then
-					hrp.CFrame = randomSpawn.CFrame + Vector3.new(0, 5, 0)
-				end
+	for _, player in pairs(Players:GetPlayers()) do
+		local character = player.Character
+		if character and character:FindFirstChild("HumanoidRootPart") then
+			local distance = (humanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude
+			if distance < shortestDistance then
+				closestPlayer = player
+				shortestDistance = distance
 			end
 		end
 	end
+
+	return closestPlayer
 end
 
--- starts by checking if all candles are fixed, if yes gives the player the walkSpeed buff
-local function startPhaseTwo()
+-- Rotates NPC to face a target position horizontally
+local function facePosition(position)
+	local currentPos = humanoidRootPart.Position
+	local lookAt = CFrame.new(currentPos, Vector3.new(position.X, currentPos.Y, position.Z))
+	humanoidRootPart.CFrame = lookAt
+end
 
-	-- runs through a folder with all candles in the map and checks if any fixed?.Value == false, stops function if any
-	for _, candle in ipairs(candlesFolder:GetChildren()) do
-		if candle:FindFirstChild("fixed?") and not candle["fixed?"].Value then
-			return
+-- Uses Roblox pathfinding to move NPC to a destination, waiting until movement finishes or fails
+local function moveToPosition(destination)
+	local path = PathfindingService:CreatePath({
+		AgentRadius = 2,
+		AgentHeight = 6,
+		AgentCanClimb = true,
+		AgentCanJump = true,
+	})
+
+	print("Computing path to", destination)
+	path:ComputeAsync(humanoidRootPart.Position, destination)
+
+	if path.Status ~= Enum.PathStatus.Success then
+		print("Path computation failed with status:", path.Status.Name)
+		return false
+	end
+
+	local waypoints = path:GetWaypoints()
+	print("Path computed successfully with", #waypoints, "waypoints")
+
+	walkAnimation:Play()
+
+	for i, waypoint in ipairs(waypoints) do
+		print("Moving to waypoint", i, waypoint.Position)
+		humanoid:MoveTo(waypoint.Position)
+		local reached = humanoid.MoveToFinished:Wait()
+		print("Reached waypoint", i, "result:", reached)
+
+		if not reached then
+			print("Failed to reach waypoint", i)
+			walkAnimation:Stop()
+			return false
 		end
 	end
 
-	-- this check is to see if the face2 buff happened already
-	if face2.Value == false then
-		local humanoid = chosenPlayer.Character and chosenPlayer.Character:FindFirstChild("Humanoid")
-		if humanoid then
-			humanoid.WalkSpeed += KILLER_BUFF_SPEED -- add the buff if it finds the killer's humanoid
+	walkAnimation:Stop()
+	return true
+end
+
+-- Applies a physics impulse to push the player backward when attacked
+local function pushPlayerBack(player)
+	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		local direction = (hrp.Position - humanoidRootPart.Position).Unit
+		local impulse = direction * 250
+		if hrp:IsA("BasePart") then
+			hrp:ApplyImpulse(impulse)
 		end
-		print("Phase 2 started")
+	end
+end
+
+-- Attacks a player if cooldown allows, plays attack animation and damages player
+local function attackPlayer(player)
+	if tick() - lastAttackTime < attackCooldown then
+		return
+	end
+	lastAttackTime = tick()
+
+	if not attackAnimation.IsPlaying then
+		attackAnimation:Play()
 	end
 
-	face2.Value = true 
+	local targetHumanoid = player.Character and player.Character:FindFirstChild("Humanoid")
+	if targetHumanoid then
+		targetHumanoid:TakeDamage(25)
+		pushPlayerBack(player)
+	end
 end
 
--- main script controlling the round and map
-local function roundStart()
-	print("Round started")
+-- Moves NPC randomly within a radius to simulate wandering
+local function wanderRandomly()
+	local wanderRadius = 20
+	local randomAngle = math.random() * 2 * math.pi
+	local offset = CFrame.Angles(0, randomAngle, 0).LookVector * wanderRadius
 
-	-- check if there are players in the game
-	local allPlayers = Players:GetPlayers()
-	if #allPlayers == 0 then return end
-
-	-- pick a random player from all players
-	chosenPlayer = allPlayers[math.random(1, #allPlayers)]
-	print("Chosen Killer: ", chosenPlayer.Name)
-
-	-- clear old map, clone the map, and parent it to workspace
-	clearOldMap() 
-	currentMap = mapTemplate:Clone()
-	currentMap.Name = "map"
-	currentMap.Parent = Workspace
-
-	-- get candle folder from the new map clone and set up all players (morph and spawn)
-	candlesFolder = currentMap:FindFirstChild("candles")
-	setupCharacters(allPlayers, currentMap)
-	wait(1)
-	roundStartEvent:FireAllClients(ROUND_DURATION) -- fire event to start timer countdown
+	moveToPosition(humanoidRootPart.Position + offset)
 end
 
--- round ended: reset values and players
-local function roundEnd()
-	print("Round ended")
+-- Finds the closest tree tagged with "Tree" for the NPC to interact with
+local function getClosestTree()
+	local closestTree = nil
+	local shortestDistance = math.huge
 
-	for _, player in ipairs(Players:GetPlayers()) do
-
-		if player.alive.Value == true then
-			player.alive.Value = false
-		end
-
-		if player.killer.Value == true then
-			player.killer.Value = false
-		end
-
-		local char = player.Character -- get player character
-
-		if char then -- if character found, reset player to spawn by setting health to 0
-			local humanoid = char:FindFirstChild("Humanoid")
-			if humanoid then
-				humanoid.Health = 0
+	for _, tree in ipairs(CollectionService:GetTagged("Tree")) do
+		if tree:IsA("BasePart") then
+			local distance = (humanoidRootPart.Position - tree.Position).Magnitude
+			if distance < shortestDistance then
+				closestTree = tree
+				shortestDistance = distance
 			end
 		end
 	end
+
+	return closestTree
+end
+
+-- Moves NPC to the closest tree and destroys it, applying impulse if not anchored
+local function destroyClosestTree()
+	local tree = getClosestTree()
 	
-	roundEndEvent:FireAllClients(ROUND_WAIT)
-end
+	print(tree)
+	
+	if not tree then return end
 
--- assign values when a player joins the game
-Players.PlayerAdded:Connect(assignKillerTag)
+	-- Ensure target Y coordinate matches NPC's Y for successful pathfinding
+	local targetPos = Vector3.new(tree.Position.X, humanoidRootPart.Position.Y, tree.Position.Z)
+	
+	local reached = moveToPosition(targetPos)
+	if not reached then return end
 
--- main function controlling game flow
-function RoundManager.Run()
+	facePosition(tree.Position)
+	task.wait(1)
 
-	-- main loop that is the heart of the RoundManager module
-	while true do
-
-		if moreThanTwoPlayers() then -- check if more than minimum players are in game
-
-			-- after minimum players, start a round to allow players to change characters or perks
-			roundEnd()
-
-			-- countdown until round starts
-			wait(1)
-			timer.Value = ROUND_WAIT
-			for i = ROUND_WAIT, 0, -1 do
-				timer.Value = i
-				wait(1)
-			end
-
-			-- start the round: teleport players, morph, spawn, assign killer
-			roundStart()
-
-			-- countdown round duration, break if conditions met
-			wait(1)
-			timer.Value = ROUND_DURATION
-			for i = ROUND_DURATION, 0, -1 do
-				timer.Value = i
-				
-				wait(1)
-				
-				startPhaseTwo() -- it will run the function every second and see if round 2 started
-				
-				if allSurvivorsDead() or killerIsDeadOrLeft() then -- it will see if survivors are dead or the killer is dead
-					break -- brack the for and end the round
-				end
-			end
-
-		else -- wait for more players if not enough
-			print("Waiting for more players...")
-			wait(1)
+	if tree and tree.Parent then
+		if not tree.Anchored then
+			tree:ApplyImpulse(Vector3.new(0, 400, 0))
 		end
+		tree:Destroy()
 	end
 end
 
-return RoundManager
+-- Walks near the closest player, offset by a random radius and angle
+local function walkNearPlayer()
+	local player = getClosestPlayer()
+	if not player then return end
+
+	local playerPos = player.Character.HumanoidRootPart.Position
+	local angle = math.random() * 2 * math.pi
+	local radius = 15 + math.random() * 10
+
+	local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
+	moveToPosition(playerPos + offset)
+end
+
+-- Chases the closest player and attacks if in range
+local function chasePlayer()
+	local player = getClosestPlayer()
+	if not player then return end
+
+	task.spawn(function()
+		while player and player.Parent do
+			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not hrp then break end
+
+			local distance = (humanoidRootPart.Position - hrp.Position).Magnitude
+			if distance > 6 then
+				humanoid:MoveTo(hrp.Position)
+			else
+				facePosition(hrp.Position)
+				attackPlayer(player)
+				break
+			end
+
+			task.wait(0.25)
+		end
+	end)
+end
+
+-- Main AI loop deciding NPC behavior based on action count
+local function behaviorLoop()
+	while true do
+		-- After several actions, do a special chase behavior
+		if actionCounter >= math.random(5, 10) then
+			specialAnimation:Play()
+			task.wait(2)
+			chasePlayer()
+			specialAnimation:Stop()
+			actionCounter = 0
+		else
+			-- Choose a behavior: 1 = wander, 2 = destroy tree, 3 = walk near player
+			local choice = 2
+			if choice == 1 then
+				wanderRandomly()
+			elseif choice == 2 then
+				destroyClosestTree()
+			elseif choice == 3 then
+				walkNearPlayer()
+			end
+			actionCounter = actionCounter + 1
+		end
+
+		task.wait(math.random(1, 2)) -- Wait a bit before next action to avoid spamming
+	end
+end
+
+-- Start the NPC behavior loop
+behaviorLoop()
