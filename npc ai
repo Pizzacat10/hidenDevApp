@@ -1,8 +1,21 @@
+fix a bug with the chase that all -- by me not ai
+and add animtion to the mimic -- by me not ai
 local rs = game:GetService("ReplicatedStorage")
+
+local players = game:GetService("Players")
 
 local char = script.Parent
 local humanoid = char:FindFirstChild('Humanoid')
 local hrp = char:FindFirstChild("HumanoidRootPart")
+hrp:SetNetworkOwner(nil)
+
+local animtion = char:FindFirstChild("animtion")
+
+local idle = animtion:FindFirstChild("idle")
+local idleLoad = humanoid:LoadAnimation(idle)
+
+local walk = animtion:FindFirstChild("walk")
+local walkLoad = humanoid:LoadAnimation(walk)
 
 local sound = rs:FindFirstChild("sound")
 local fnaf2Mask = sound:FindFirstChild("Mask Fnaf 2 ")
@@ -28,13 +41,14 @@ local wayPointPath = { -- it is all the wayPoint in the map that the mimic can w
 	[14] = workspace:FindFirstChild("pointforetin").Position,
 }
 
+
 -- chace function is used to get the mimic to chace smothly with no waiting for it to get to the point
 -- and it will also make the mimic to walk to the point that the player is at
 local function chace(point)
 	
 	local path = pathfindingService:CreatePath({ -- is a table that is used in creating the path for the mimic
 		AgentRadius = 2,
-		AgentHeight = 5,
+		AgentHeight = 3,
 		AgentCanJump = false,
 	})
 
@@ -73,37 +87,34 @@ local function chace(point)
 end
 
 -- this is used to check if the player is in the ray of the mimic
--- it is shooting rays out of his face and seeing what it hit if it's a player it will chase after him
-local function lookForPlayer()
-	-- make the raycast with a head position and a raydercshen position that is a attachment to the head
-	local headPositon = char:FindFirstChild("Head").Position
-	local rayOriginInHead = char:FindFirstChild("Head"):FindFirstChild("raydercshen").WorldCFrame.Position
+-- it is using raycast to see if the mimic got a line of sit to the player
+-- and if yes it will start going after them
+local function canSeePlayer(target)
 
-	local rayOrigin = headPositon -- that is the start position of the ray
-	local direction = rayOriginInHead -- that is the end position of the ray
-	local rayDirection = ( direction - rayOrigin) -- calc the direction of the ray
-
+	local rayOrigin = hrp.Position -- that is the start position of the ray
+	local direction = target:FindFirstChild("HumanoidRootPart").Position -- that is the end position of the ray
+	
+	local range = 10 -- how fare can the mimic see
+	
+	local rayDirection = ( direction - rayOrigin).Unit * range -- calc the direction of the ray
+	
+	-- this is used to get the raycast result and the Instance what let us know if it's a player
 	local raycastResult = workspace:Raycast(rayOrigin, rayDirection)
-
 
 	if raycastResult then -- if the ray hit somthing it will see what it is
 		print("Instance:", raycastResult.Instance.Name)
-
-		local TargetChar = raycastResult.Instance.Parent -- get the pernt of the hit part
-
-		local player = game.Players:GetPlayerFromCharacter(TargetChar) -- and check if it's a player
-
-		if player then -- and if it is not nothing happen
-			
-			-- it starting to chase the player with the function
-			-- and use the position of the player to know where to go
-			chace(TargetChar:FindFirstChild("HumanoidRootPart").Position)
-
+		
+		if raycastResult.Instance:IsDescendantOf(target) then -- it is check if it is a part of the player/target
+			chace(target:FindFirstChild("HumanoidRootPart").Position) -- that start up the chase
+			walkLoad:Play() -- it play the walk animtion
+			return true
 		end
 		
 		
 	end
-
+	
+	return false
+	
 end
 
 -- remove the accesorys if there is any
@@ -232,7 +243,21 @@ local function moveFunction(finishPosition)
 			part.Parent = game.Workspace
 			
 			humanoid:MoveTo(waypoint.Position)
-			lookForPlayer()
+			
+			for _, player in pairs(players:GetChildren()) do -- run at all the players in the game
+				if player.Character then -- check if they got character
+					-- if yes it will check if the mimic can see them
+					if canSeePlayer(player.Character) then
+						-- if it see them then it will start going after them
+						-- and will destroy the wayPoint that they where going to
+						canSeePlayer(player.Character)
+						part:Destroy()
+						break -- break the loop to not spawn the next wayPoint
+					end
+					
+				end
+			end
+			
 			humanoid.MoveToFinished:Wait() -- it is waiting for the mimic to get to the wayPoint that he going to
 			part:Destroy() -- after he gets here it is destroying the lest part
 			
@@ -248,7 +273,7 @@ end
 local function walkPoint()
 	
 	local randomPoint = math.random(1,#wayPointPath) -- pick a radom wayPoint out of them all
-	
+	walkLoad:Play()
 	moveFunction(wayPointPath[randomPoint]) -- using the fuction to make the mimic to mover there
 	
 end
@@ -278,9 +303,10 @@ local function mainFrameM2()
 
 				end
 			end)
-
+			idleLoad:Play()
+			walkLoad:Stop()
 			wait(0.5) -- and it wait for 0.5 seconds to start again
-			
+			idleLoad:Stop()
 		end
 
 	end
