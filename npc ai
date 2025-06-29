@@ -1,245 +1,289 @@
+local rs = game:GetService("ReplicatedStorage")
 
-local PathfindingService = game:GetService("PathfindingService")
-local Players = game:GetService("Players")
-local CollectionService = game:GetService("CollectionService")
-local Workspace = game:GetService("Workspace")
+local char = script.Parent
+local humanoid = char:FindFirstChild('Humanoid')
+local hrp = char:FindFirstChild("HumanoidRootPart")
 
--- References to the NPC model and components
-local npc = workspace:FindFirstChild("the mimic")
-local humanoid = npc:WaitForChild("Humanoid")
-local humanoidRootPart = npc:WaitForChild("HumanoidRootPart")
+local sound = rs:FindFirstChild("sound")
+local fnaf2Mask = sound:FindFirstChild("Mask Fnaf 2 ")
 
--- Setup animator and animations (walking, attacking, special)
-local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
-local walkAnim = Instance.new("Animation")
-walkAnim.AnimationId = "rbxassetid://130563157348265"
-local walkAnimation = animator:LoadAnimation(walkAnim)
+local pathfindingService = game:GetService("PathfindingService")
 
-local attackAnim = Instance.new("Animation")
-attackAnim.AnimationId = "rbxassetid://133138715796123"
-local attackAnimation = animator:LoadAnimation(attackAnim)
+local chase = false
 
-local specialAnim = Instance.new("Animation")
-specialAnim.AnimationId = "rbxassetid://117110635321254"
-local specialAnimation = animator:LoadAnimation(specialAnim)
+local wayPointPath = { -- it is all the wayPoint in the map that the mimic can walk around
+	[1] = workspace:FindFirstChild("pointOne").Position,
+	[2] = workspace:FindFirstChild("pointTwo").Position,
+	[3] = workspace:FindFirstChild("pointThree").Position,
+	[4] = workspace:FindFirstChild("pointFore").Position,
+	[5] = workspace:FindFirstChild("pointFive").Position,
+	[6] = workspace:FindFirstChild("pointsixe").Position,
+	[7] = workspace:FindFirstChild("pointseven").Position,
+	[8] = workspace:FindFirstChild("pointegth").Position,
+	[9] = workspace:FindFirstChild("pointnine").Position,
+	[10] = workspace:FindFirstChild("pointten").Position,
+	[11] = workspace:FindFirstChild("pointelven").Position,
+	[12] = workspace:FindFirstChild("pointtwlve").Position,
+	[13] = workspace:FindFirstChild("pointthreeteen").Position,
+	[14] = workspace:FindFirstChild("pointforetin").Position,
+}
 
-local lastAttackTime = 0
-local attackCooldown = 2
-local actionCounter = 0
-
--- Finds the nearest player for NPC to interact with
-local function getClosestPlayer()
-	local closestPlayer = nil
-	local shortestDistance = math.huge
-
-	for _, player in pairs(Players:GetPlayers()) do
-		local character = player.Character
-		if character and character:FindFirstChild("HumanoidRootPart") then
-			local distance = (humanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude
-			if distance < shortestDistance then
-				closestPlayer = player
-				shortestDistance = distance
-			end
-		end
-	end
-
-	return closestPlayer
-end
-
--- Rotates NPC to face a specific position horizontally
-local function facePosition(position)
-	local currentPos = humanoidRootPart.Position
-	local lookAt = CFrame.new(currentPos, Vector3.new(position.X, currentPos.Y, position.Z))
-	humanoidRootPart.CFrame = lookAt
-end
-
--- Uses Roblox PathfindingService to move NPC smoothly to a target destination
--- Plays walking animation during movement and waits for each waypoint to be reached
-local function moveToPosition(destination)
-	local path = PathfindingService:CreatePath({
+-- chace function is used to get the mimic to chace smothly with no waiting for it to get to the point
+-- and it will also make the mimic to walk to the point that the player is at
+local function chace(point)
+	
+	local path = pathfindingService:CreatePath({ -- is a table that is used in creating the path for the mimic
 		AgentRadius = 2,
-		AgentHeight = 6,
-		AgentCanClimb = true,
-		AgentCanJump = true,
+		AgentHeight = 5,
+		AgentCanJump = false,
 	})
 
-	print("Computing path to", destination)
-	path:ComputeAsync(humanoidRootPart.Position, destination)
+	local success, errorMessage = pcall(function() -- check if the mimic can get to the point
+		path:ComputeAsync(hrp.Position,point)
+	end)
 
-	if path.Status ~= Enum.PathStatus.Success then
-		print("Path computation failed with status:", path.Status.Name)
-		return false
-	end
-
-	local waypoints = path:GetWaypoints()
-	print("Path computed successfully with", #waypoints, "waypoints")
-
-	walkAnimation:Play()
-
-	for i, waypoint in ipairs(waypoints) do
-		print("Moving to waypoint", i, waypoint.Position)
-		humanoid:MoveTo(waypoint.Position)
-		local reached = humanoid.MoveToFinished:Wait()
-		print("Reached waypoint", i, "result:", reached)
-
-		if not reached then
-			print("Failed to reach waypoint", i)
-			walkAnimation:Stop()
-			return false
+	-- Confirm the computation was successful
+	-- if yes it will run trow all the waypoints
+	if success and path.Status == Enum.PathStatus.Success then
+		-- For each waypoint, create a part to visualize the path
+		for _, waypoint in path:GetWaypoints() do
+			local part = Instance.new("Part") -- creating the part make it Transparency 1
+			part.Position = waypoint.Position
+			part.Size = Vector3.new(0.5, 0.5, 0.5)
+			part.Color = Color3.new(1, 0, 1)
+			part.Transparency = 1
+			part.Anchored = true
+			part.CanCollide = false
+			part.Parent = game.Workspace
+			
+			chase = true -- trun on chase mode
+			humanoid:MoveTo(waypoint.Position) -- move to the waypoint
+			part:Destroy() -- destroying the part and making
+			
+			-- it will keep destroing one part and remaking a new path for it to run smothly after the player
 		end
+
+	else -- chacking if there now errors
+		print(`Path unable to be computed, error: {errorMessage}`)
+		return 
 	end
 
-	walkAnimation:Stop()
-	return true
+	chase = false -- deible off chase mode
+
 end
 
--- Applies a physical push to player when attacked, adding impact feel to combat
-local function pushPlayerBack(player)
-	local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	if hrp then
-		local direction = (hrp.Position - humanoidRootPart.Position).Unit
-		local impulse = direction * 250
-		if hrp:IsA("BasePart") then
-			hrp:ApplyImpulse(impulse)
+-- this is used to check if the player is in the ray of the mimic
+-- it is shooting rays out of his face and seeing what it hit if it's a player it will chase after him
+local function lookForPlayer()
+	-- make the raycast with a head position and a raydercshen position that is a attachment to the head
+	local headPositon = char:FindFirstChild("Head").Position
+	local rayOriginInHead = char:FindFirstChild("Head"):FindFirstChild("raydercshen").WorldCFrame.Position
+
+	local rayOrigin = headPositon -- that is the start position of the ray
+	local direction = rayOriginInHead -- that is the end position of the ray
+	local rayDirection = ( direction - rayOrigin) -- calc the direction of the ray
+
+	local raycastResult = workspace:Raycast(rayOrigin, rayDirection)
+
+
+	if raycastResult then -- if the ray hit somthing it will see what it is
+		print("Instance:", raycastResult.Instance.Name)
+
+		local TargetChar = raycastResult.Instance.Parent -- get the pernt of the hit part
+
+		local player = game.Players:GetPlayerFromCharacter(TargetChar) -- and check if it's a player
+
+		if player then -- and if it is not nothing happen
+			
+			-- it starting to chase the player with the function
+			-- and use the position of the player to know where to go
+			chace(TargetChar:FindFirstChild("HumanoidRootPart").Position)
+
 		end
+		
+		
 	end
+
 end
 
--- Performs an attack if cooldown allows, deals damage, and pushes the player back
-local function attackPlayer(player)
-	if tick() - lastAttackTime < attackCooldown then
+-- remove the accesorys if there is any
+local function removeAccesorys()
+	for _,v in pairs(char:GetChildren()) do
+		if v:IsA("Accessory") then
+			v:Destroy()
+		end
+	end
+	
+	fnaf2Mask:Play()
+	
+end
+
+-- put the accesorys on the mimic
+local function putAccesory(accsosrys)
+	
+	local putAccesory = math.random(1,10) -- role a number so it will have a chance to not apear
+	
+	if putAccesory == 1 then -- if the number is 1 then it will put the accesory on the mimic
+		print("lost")
 		return
 	end
-	lastAttackTime = tick()
+	
+	removeAccesorys() -- reomve the accsory to not over lap them
+	-- it checks for the accesorys folder in the replicated storage
+	if not accsosrys:IsA("Folder") then return end
+	-- get all the accsorys in the folder
+	local accsosrysChildern = accsosrys:GetChildren()
+	
+	if accsosrysChildern == 0 then -- if they got any accesory
+		print("no accsosrys found")
+		return
+	end
+	
+	local random = math.random(1,#accsosrysChildern) -- role the index accesory
+	
+	print(random)
+	
+	local randomid = accsosrysChildern[random] -- get the accesory with the index
+	
+	local acc = randomid:Clone() -- clone the accesory and put at in char
+	acc.Parent = char 
+		
+end
 
-	if not attackAnimation.IsPlaying then
-		attackAnimation:Play()
+-- change the mimic face
+local function changeFace(faces)
+	
+	-- check if it a folder
+	if not faces:IsA("Folder") then return end
+	
+	-- check to see if the mimic have his head
+	local MimicHead = char:FindFirstChild("Head")
+	if not MimicHead then return end
+	
+	-- check if the mimic got a decal on his head(his face)
+	local face = MimicHead:FindFirstChild("Decal")
+	if not face then return end
+	
+	-- get all of the face childern
+	local facesChildern = faces:GetChildren()
+
+	if facesChildern == 0 then -- check if the folder have childern
+		print("no accsosrys found")
+		return
 	end
 
-	local targetHumanoid = player.Character and player.Character:FindFirstChild("Humanoid")
-	if targetHumanoid then
-		targetHumanoid:TakeDamage(25)
-		pushPlayerBack(player)
-	end
+	local random = math.random(1,#facesChildern) -- pick random index for a faces
+	
+	print(random)
+	
+	local randomFaceId = facesChildern[random] -- get the index face
+	
+	face.Texture = randomFaceId.Texture -- put the text of the index face on mimic face
+	
 end
 
--- Causes the NPC to wander randomly around its current position to simulate natural movement
-local function wanderRandomly()
-	local wanderRadius = 20
-	local randomAngle = math.random() * 2 * math.pi
-	local offset = CFrame.Angles(0, randomAngle, 0).LookVector * wanderRadius
-
-	moveToPosition(humanoidRootPart.Position + offset)
+-- let the mimic chagne is a pirans and look deffrent
+-- can help him supris the player
+local function changeSuit()
+	
+	-- check for the mimic cloths that he can change in too
+	local cloths = rs:FindFirstChild("cloths")
+	if not cloths then return end
+	
+	-- check for the mimic faces that he can use
+	local faces = cloths:FindFirstChild("faces")
+	if not faces then return end
+	
+	-- check for the accsosrys that the mimic can use
+	local accsosrys = cloths:FindFirstChild("accsory")
+	if not accsosrys then return end
+	
+	changeFace(faces) -- use the funchtion to chagne his face
+	putAccesory(accsosrys) -- use the funtion to chaget his accsorys
+	
 end
 
--- Finds the closest tree tagged with "Tree" for the NPC to interact with (destroy)
-local function getClosestTree()
-	local closestTree = nil
-	local shortestDistance = math.huge
-
-	for _, tree in ipairs(CollectionService:GetTagged("Tree")) do
-		if tree:IsA("BasePart") then
-			local distance = (humanoidRootPart.Position - tree.Position).Magnitude
-			if distance < shortestDistance then
-				closestTree = tree
-				shortestDistance = distance
-			end
-		end
-	end
-
-	return closestTree
-end
-
--- Moves to the closest tree and destroys it after facing it
--- Adds a delay to simulate interaction time
-local function destroyClosestTree()
-	local tree = getClosestTree()
-
-	print(tree)
-
-	if not tree then return end
-
-	local targetPos = tree.Position
-	targetPos = Vector3.new(targetPos.X, humanoidRootPart.Position.Y, targetPos.Z)
-	moveToPosition(targetPos)
-
-	if not targetPos then return end
-
-	facePosition(tree.Position)
-	task.wait(1)
-
-	if tree and tree.Parent then
-		if not tree.Anchored then
-			tree:ApplyImpulse(Vector3.new(0, 400, 0))
-		end
-		tree:Destroy()
-	end
-end
-
-
--- Moves the NPC near a player, simulating stalking or patrolling behavior
-local function walkNearPlayer()
-	local player = getClosestPlayer()
-	if not player then return end
-
-	local playerPos = player.Character.HumanoidRootPart.Position
-	local angle = math.random() * 2 * math.pi
-	local radius = 15 + math.random() * 10
-
-	local offset = Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
-	moveToPosition(playerPos + offset)
-end
-
--- NPC chases the closest player and attacks if close enough
--- Runs in a separate task to allow asynchronous chasing behavior
-local function chasePlayer()
-	local player = getClosestPlayer()
-	if not player then return end
-
-	task.spawn(function()
-		while player and player.Parent do
-			local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-			if not hrp then break end
-
-			local distance = (humanoidRootPart.Position - hrp.Position).Magnitude
-			if distance > 6 then
-				humanoid:MoveTo(hrp.Position)
-			else
-				facePosition(hrp.Position)
-				attackPlayer(player)
-				break
-			end
-
-			task.wait(0.25)
-		end
+-- moveFunction is use to move the mimic with less code
+-- it is like the chase but it is waitng bettwin each move
+-- and it loooking for the player as in chase mode it is already know where you are
+local function moveFunction(finishPosition)
+	
+	local path = pathfindingService:CreatePath({
+		AgentRadius = 2,
+		AgentHeight = 5,
+		AgentCanJump = false,
+	})
+	
+	local success, errorMessage = pcall(function()
+		path:ComputeAsync(hrp.Position, finishPosition)
 	end)
+	
+	-- Confirm the computation was successful
+	if success and path.Status == Enum.PathStatus.Success then
+		-- For each waypoint, create a part to visualize the path
+		for _, waypoint in path:GetWaypoints() do
+			local part = Instance.new("Part")
+			part.Position = waypoint.Position
+			part.Size = Vector3.new(0.5, 0.5, 0.5)
+			part.Color = Color3.new(1, 0, 1)
+			part.Transparency = 1
+			part.Anchored = true
+			part.CanCollide = false
+			part.Parent = game.Workspace
+			
+			humanoid:MoveTo(waypoint.Position)
+			lookForPlayer()
+			humanoid.MoveToFinished:Wait() -- it is waiting for the mimic to get to the wayPoint that he going to
+			part:Destroy() -- after he gets here it is destroying the lest part
+			
+		end
+		
+	else
+		print(`Path unable to be computed, error: {errorMessage}`)
+	end
+	
 end
 
--- Main behavior loop controlling NPC actions
--- Performs a special action every 5-10 cycles, otherwise picks random behaviors
-local function behaviorLoop()
-	while true do
-		if actionCounter >= math.random(5, 10) then
-			specialAnimation:Play()
-			task.wait(2)
-			chasePlayer()
-			specialAnimation:Stop()
-			actionCounter = 0
-		else
-			local choice = math.random(1,3)
-			if choice == 1 then
-				wanderRandomly()
-			elseif choice == 2 then
-				destroyClosestTree()
-			elseif choice == 3 then
-				walkNearPlayer()
-			end
-			actionCounter = actionCounter + 1
+-- it is a function that pick a random point and tell the mimic to go there
+local function walkPoint()
+	
+	local randomPoint = math.random(1,#wayPointPath) -- pick a radom wayPoint out of them all
+	
+	moveFunction(wayPointPath[randomPoint]) -- using the fuction to make the mimic to mover there
+	
+end
+
+-- that is the mainFrame of m2( mimic 2 )
+-- that is the mianFrame that one that tell what funtion to work when
+local function mainFrameM2()
+	while true do -- it is start with a loop that is never ending for the mimic to all was work
+		
+		while not chase do -- make a loop that will play while the mimic is not in chase mode
+
+			-- pick one out of 3 "events" 
+			-- there are 2 blank for that to add less chance of an event to happen
+			local randomChanceOfEvent = math.round(1,4) 
+			print(randomChanceOfEvent)
+
+			walkPoint() -- it is going to a random point in the map
+			task.delay(math.random(5,10),function() -- it is delaying the event by 5-10s 
+				if randomChanceOfEvent == 1 then -- if the randomChanceOfEvent is 1 then it will make him change suit 
+					changeSuit()
+
+				elseif randomChanceOfEvent == 2 then -- if the randomChanceOfEvent is 2 then it will make him remove accesorys
+					removeAccesorys()
+
+				elseif randomChanceOfEvent == 3 then -- and same with this one
+					removeAccesorys()
+
+				end
+			end)
+
+			wait(0.5) -- and it wait for 0.5 seconds to start again
+			
 		end
 
-		task.wait(math.random(1, 2))
 	end
 end
 
--- Start the AI behavior loop
-behaviorLoop()
+mainFrameM2() -- that is the funtion to call it all and start the system
